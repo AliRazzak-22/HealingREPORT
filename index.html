@@ -12,7 +12,7 @@
 <title>تقارير مالية — صيدلية درب الشفاء</title>
 <link id="favicon" rel="icon" href="">
 <link id="apple-icon" rel="apple-touch-icon" href="">
-<link id="manifest-link" rel="manifest" href="">
+<link id="manifest-link" rel="manifest" href="manifest.webmanifest">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800;900&display=swap" rel="stylesheet">
@@ -320,6 +320,8 @@ const IC = {
   back:'<path d="M9 18l6-6-6-6"/>',
   fwd:'<path d="M15 18l-6-6 6-6"/>',
   alert:'<path d="M12 3 2.5 20h19z"/><path d="M12 9.5v4M12 16.8h.01"/>',
+  download:'<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>',
+  share:'<path d="M4 12v7a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7M12 3v13M8 7l4-4 4 4"/>',
 };
 const icon = (n, cls) => `<svg class="${cls||''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${IC[n]||IC.box}</svg>`;
 document.querySelectorAll('[data-icon]').forEach(el => { el.innerHTML = icon(el.dataset.icon); });
@@ -523,7 +525,19 @@ async function connectCloud() {
   listenCloud();
 }
 let _rt = 0;
-function scheduleRender() { clearTimeout(_rt); _rt = setTimeout(() => renderAll(false), 400); }
+function scheduleRender() {
+  clearTimeout(_rt);
+  _rt = setTimeout(() => renderAll(false), 400);
+  markDirty();
+}
+let snapDirty = false, snapTimer = 0;
+function markDirty() {
+  if (SOURCE !== 'cloud') return;
+  snapDirty = true;
+  clearTimeout(snapTimer);
+  snapTimer = setTimeout(() => { if (snapDirty) { saveSnapshot(); snapDirty = false; } }, 20000);
+}
+window.addEventListener('pagehide', () => { if (snapDirty && SOURCE === 'cloud') saveSnapshot(); });
 function listenCloud() {
   if (cloudListeners || !cloudDb) return;
   cloudListeners = true;
@@ -674,32 +688,73 @@ function loadDemo() {
   });
 }
 
+/* ── نسخة محفوظة للعمل دون اتصال ── */
+let SNAP_TS = 0;
+function openCacheDb() {
+  return new Promise((res, rej) => {
+    const r = indexedDB.open('fin_reports_cache', 1);
+    r.onupgradeneeded = e => { const d = e.target.result; if (!d.objectStoreNames.contains('snap')) d.createObjectStore('snap', { keyPath: 'id' }); };
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+  });
+}
+async function saveSnapshot() {
+  try {
+    const db = await openCacheDb();
+    await new Promise((res, rej) => {
+      const q = db.transaction('snap', 'readwrite').objectStore('snap')
+        .put({ id: 'data', ts: Date.now(), sales: D.sales, purchases: D.purchases, suppliers: D.suppliers,
+          payments: D.payments, customers: D.customers, accounts: D.accounts, products: D.products, settings: D.settings });
+      q.onsuccess = () => res(); q.onerror = () => rej(q.error);
+    });
+    db.close();
+  } catch (_) {}
+}
+async function loadSnapshot() {
+  const db = await openCacheDb();
+  const snap = await new Promise((res, rej) => {
+    const q = db.transaction('snap', 'readonly').objectStore('snap').get('data');
+    q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error);
+  });
+  db.close();
+  if (!snap || !Array.isArray(snap.sales)) throw new Error('no-snap');
+  ['sales','purchases','suppliers','payments','customers','accounts','products'].forEach(c => D[c] = snap[c] || []);
+  D.settings = snap.settings || {};
+  SNAP_TS = snap.ts || 0;
+}
+
 /* ── إدارة المصدر ── */
 function setSyncUI(on) {
   const dot = $('#sync-dot'), txt = $('#sync-txt');
-  dot.className = SOURCE === 'cloud' ? (on ? 'on' : '') : SOURCE === 'local' ? 'on' : SOURCE === 'demo' ? 'off' : '';
-  txt.textContent = SOURCE === 'cloud' ? (on ? 'مزامنة حية' : 'السحابة غير متصلة') : SOURCE === 'local' ? 'بيانات محلية' : SOURCE === 'demo' ? 'وضع المعاينة' : 'جارٍ الاتصال…';
+  dot.className = SOURCE === 'cloud' ? (on ? 'on' : '') : (SOURCE === 'local' || SOURCE === 'cached') ? 'on' : SOURCE === 'demo' ? 'off' : '';
+  txt.textContent = SOURCE === 'cloud' ? (on ? 'مزامنة حية' : 'السحابة غير متصلة') : SOURCE === 'local' ? 'بيانات محلية' : SOURCE === 'cached' ? 'بيانات محفوظة' : SOURCE === 'demo' ? 'وضع المعاينة' : 'جارٍ الاتصال…';
 }
 function setModeBar() {
   const bar = $('#mode-bar'), txt = $('#mode-txt');
   if (SOURCE === 'demo') { txt.textContent = 'وضع المعاينة — بيانات تجريبية وليست بيانات صيدليتك'; bar.classList.add('show'); }
   else if (SOURCE === 'local') { txt.textContent = 'وضع محلي — بيانات هذا المتصفح فقط (بدون سحابة)'; bar.classList.add('show'); }
+  else if (SOURCE === 'cached') { txt.textContent = `دون اتصال — بيانات آخر مزامنة ${SNAP_TS ? fmtDate(SNAP_TS) + ' ' + fmtTime(SNAP_TS) : ''}`; bar.classList.add('show'); }
   else bar.classList.remove('show');
 }
 async function bootSource(force) {
   const params = new URLSearchParams(location.search);
   const want = force || params.get('source') || (params.get('demo') === '1' ? 'demo' : '');
   SOURCE = 'connecting'; setSyncUI();
+  const toCachedThenDemo = async msg => {
+    try { await loadSnapshot(); SOURCE = 'cached'; if (msg) toast(msg); }
+    catch (_) { loadDemo(); SOURCE = 'demo'; if (msg) toast(msg); }
+  };
   if (want === 'demo') { loadDemo(); SOURCE = 'demo'; }
+  else if (want === 'cached') await toCachedThenDemo('لا توجد نسخة محفوظة — وضع المعاينة');
   else if (want === 'local') {
     try { await loadLocal(); SOURCE = 'local'; }
-    catch (e) { loadDemo(); SOURCE = 'demo'; toast('لا توجد بيانات محلية — وضع المعاينة'); }
+    catch (_) { await toCachedThenDemo('لا بيانات محلية ولا محفوظة — وضع المعاينة'); }
   } else {
-    try { await connectCloud(); SOURCE = 'cloud'; }
+    try { await connectCloud(); SOURCE = 'cloud'; saveSnapshot(); }
     catch (e) {
-      console.warn('cloud failed:', e.message || e);
+      console.warn('cloud failed:', (e && e.message) || e);
       try { await loadLocal(); SOURCE = 'local'; toast('تعذر الاتصال بالسحابة — بيانات محلية'); }
-      catch (_) { loadDemo(); SOURCE = 'demo'; }
+      catch (_) { await toCachedThenDemo('تعذر الاتصال بالسحابة — عرض آخر نسخة محفوظة'); }
     }
   }
   setSyncUI(SOURCE === 'cloud' ? cloudReady : true);
@@ -727,13 +782,34 @@ function applyLogo(src) {
   $('#logo').src = src;
   $('#favicon').href = src;
   $('#apple-icon').href = src;
-  const manifest = {
-    name: 'تقارير مالية — ' + (D.settings.pharmacyName || 'صيدلية درب الشفاء'),
-    short_name: 'تقارير مالية', start_url: location.href, scope: location.href.replace(/[^/]*$/, ''),
-    display: 'standalone', orientation: 'portrait', background_color: '#f4efe7', theme_color: '#f4efe7',
-    icons: [{ src: new URL(src, location.href).href, sizes: 'any', type: src.endsWith('.svg') || src.startsWith('data:') ? 'image/svg+xml' : 'image/png', purpose: 'any' }]
-  };
-  $('#manifest-link').href = 'data:application/manifest+json,' + encodeURIComponent(JSON.stringify(manifest));
+}
+
+/* ── التثبيت كتطبيق (PWA) ── */
+let deferredInstall = null;
+const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const isStandalone = matchMedia('(display-mode: standalone)').matches || !!navigator.standalone;
+window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); deferredInstall = e; if (!isStandalone) renderAll(false); });
+window.addEventListener('appinstalled', () => { deferredInstall = null; toast('تم تثبيت التطبيق — تجده في شاشة الجوال'); renderAll(false); });
+async function doInstall() {
+  if (deferredInstall) {
+    deferredInstall.prompt();
+    const r = await deferredInstall.userChoice.catch(() => null);
+    deferredInstall = null;
+    if (r && r.outcome === 'accepted') toast('جارٍ التثبيت…');
+    renderAll(false);
+    return;
+  }
+  if (isIOS) {
+    openSheet('التثبيت على آيفون / آيباد', `
+      <div class="card"><h3>${icon('share')} أربع خطوات ويصير تطبيقاً</h3>
+        <div class="st-row"><span class="badge b">١</span><div class="tx"><b>افتح هذا الرابط في متصفح Safari</b><span>التثبيت على آيفون لا يعمل من كروم</span></div></div>
+        <div class="st-row"><span class="badge b">٢</span><div class="tx"><b>اضغط زر المشاركة</b><span>المربع الذي يخرج منه سهم للأعلى، أسفل الشاشة</span></div></div>
+        <div class="st-row"><span class="badge b">٣</span><div class="tx"><b>اختر «إضافة إلى الشاشة الرئيسية»</b><span>Add to Home Screen</span></div></div>
+        <div class="st-row"><span class="badge b">٤</span><div class="tx"><b>اضغط «إضافة»</b><span>سيظهر التطبيق بأيقونته ويفتح بدون شريط المتصفح</span></div></div>
+      </div>`);
+    return;
+  }
+  toast('من قائمة المتصفح (⋮ أو ⋯) اختر «تثبيت التطبيق»');
 }/* ── مكوّنات مشتركة ── */
 function toast(msg) {
   const t = $('#toast'); t.textContent = msg; t.classList.add('show');
@@ -811,6 +887,12 @@ function renderHome() {
     { l:'آجل', v:Math.max(0,T.credNet), c:'#d9962e' },
   ];
   return `
+  ${isStandalone ? '' : `<div class="card" style="display:flex;align-items:center;gap:11px;padding:12px 15px">
+    <div style="width:38px;height:38px;border-radius:12px;background:rgba(156,107,63,.14);color:var(--walnut2);display:flex;align-items:center;justify-content:center;flex:none">${icon('download')}</div>
+    <div style="flex:1;min-width:0"><b style="font-size:13px;display:block">ثبّت التطبيق على جوالك</b>
+      <span style="display:block;font-size:10.5px;color:var(--sub);font-weight:700">أيقونة مستقلة على الشاشة، ويفتح حتى بدون نت</span></div>
+    <button class="chip on" data-action="install-app" style="flex:none">تثبيت</button>
+  </div>`}
   <div class="seg">
     <button class="${!isMonth?'on':''}" data-action="home-seg" data-v="today">اليوم</button>
     <button class="${isMonth?'on':''}" data-action="home-seg" data-v="month">هذا الشهر</button>
@@ -1152,8 +1234,10 @@ function sourceSheet() {
   openSheet('مصدر البيانات', `
     ${opt('cloud','السحابة (مزامنة حية)','نفس بيانات النظام الرئيسي — تتحدث فور أي بيع من أي جهاز','cloud')}
     ${opt('local','محلي (IndexedDB)','بيانات قاعدة هذا المتصفح فقط — قراءة بدون اتصال','db')}
+    ${opt('cached','نسخة محفوظة (دون اتصال)', SNAP_TS ? `آخر مزامنة: ${fmtDate(SNAP_TS)} ${fmtTime(SNAP_TS)}` : 'آخر نسخة نزلت من السحابة على هذا الجهاز','download')}
     ${opt('demo','بيانات تجريبية','معاينة التصميم ببيانات وهمية — ليست بيانات صيدليتك','flask')}
     <button class="btn" data-action="refresh-now">${icon('refresh')} تحديث الآن</button>
+    ${isStandalone ? '' : `<button class="btn ghost" data-action="install-app">${icon('download')} تثبيت التطبيق على الجوال</button>`}
     <p style="font-size:11px;color:var(--sub);font-weight:700;text-align:center;margin-top:12px;line-height:1.8">
       هذا التطبيق قراءة فقط — لا يعدّل ولا يحذف أي بيانات.<br>الشعار يُقرأ تلقائياً من ملف logo المجاور لهذا الملف.</p>`);
 }/* ── العرض العام ── */
@@ -1281,6 +1365,7 @@ document.addEventListener('click', e => {
   else if (a === 'source') sourceSheet();
   else if (a === 'close-sheet') closeSheet();
   else if (a === 'set-source') { closeSheet(); bootSource(el.dataset.v); }
+  else if (a === 'install-app') doInstall();
   else if (a === 'refresh-now') { closeSheet(); bootSource(SOURCE === 'cloud' ? 'cloud' : SOURCE); toast('جارٍ التحديث…'); }
 });
 document.addEventListener('input', e => {
@@ -1309,6 +1394,8 @@ document.addEventListener('change', e => {
 /* ── الإقلاع ── */
 loadLogo();
 bootSource();
+if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol))
+  navigator.serviceWorker.register('sw.js').catch(e => console.warn('sw:', e && e.message));
 </script>
 </body>
 </html>

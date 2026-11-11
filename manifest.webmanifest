@@ -1,0 +1,19 @@
+{
+  "name": "تقارير مالية — صيدلية درب الشفاء",
+  "short_name": "تقارير مالية",
+  "description": "التقارير المالية لصيدلية درب الشفاء — مبيعات، أرباح، ديون، كشوف حسابات",
+  "id": "./",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "dir": "rtl",
+  "lang": "ar",
+  "background_color": "#f4efe7",
+  "theme_color": "#f4efe7",
+  "icons": [
+    { "src": "logo.png", "sizes": "any", "type": "image/png", "purpose": "any" },
+    { "src": "logo.png", "sizes": "any", "type": "image/png", "purpose": "maskable" },
+    { "src": "logo.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}
