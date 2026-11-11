@@ -117,6 +117,7 @@ b,strong{font-weight:800}
 .kpi.tap{cursor:pointer;transition:transform .15s}
 .kpi.tap:active{transform:scale(.97)}
 .g{color:var(--green)} .r{color:var(--red)} .b{color:var(--blue)} .w{color:var(--walnut)} .a{color:var(--amber)}
+.note{margin-top:12px;padding-top:10px;border-top:1px dashed var(--line);font-size:10.5px;color:var(--sub);font-weight:700;line-height:1.75}
 
 /* ── Segmentedو Chips ── */
 .seg{display:flex;background:var(--seg);border-radius:13px;padding:3px;margin-bottom:12px}
@@ -394,8 +395,14 @@ function salesTotals(rows) {
   const tDisc = rows.reduce((x, s) => x + num(s.discount), 0);
   const tRet  = rets.reduce((x, s) => x + num(s.net), 0);
   const tProfit = rows.reduce((x, s) => x + num(s.profit), 0); // المرتجعات مخزّنة بإشارة سالبة
+  const profitOf = pay => rows.filter(s => s.pay === pay).reduce((x, s) => x + num(s.profit), 0);
+  const costOf = pay => rows.filter(s => s.pay === pay).reduce((x, s) => x + (s.type === 'sale' ? num(s.cost) : -num(s.cost)), 0);
+  const profitCollected = profitOf('cash') + profitOf('electronic');
+  const profitCredit = profitOf('credit');
+  const costCollected = costOf('cash') + costOf('electronic');
+  const costCredit = costOf('credit');
   const tNet = rows.reduce((x, s) => x + (s.type === 'sale' ? num(s.net) : -num(s.net)), 0);
-  return { cashNet, elecNet, credNet, tCost, tSale, tDisc, tRet, tProfit, tNet,
+  return { cashNet, elecNet, credNet, tCost, tSale, tDisc, tRet, tProfit, tNet, profitCollected, profitCredit, costCollected, costCredit,
     income: cashNet + elecNet, nSales: sales.length, nRets: rets.length,
     avg: sales.length ? sales.reduce((x,s)=>x+num(s.net),0) / sales.length : 0 };
 }
@@ -901,9 +908,9 @@ function renderHome() {
     <div class="lbl">${icon('wallet')} صافي الدخل ${isMonth?'الشهر':'اليوم'} <span style="opacity:.7">(كاش + إلكتروني)</span></div>
     <div class="big num" data-count="${T.income}">${fmt(T.income)} <small>${esc(cur())}</small></div>
     <div class="sub-row">
-      <div>الربح<b class="num" data-count="${T.tProfit}">${fmt(T.tProfit)}</b></div>
+      <div>الربح المحصّل<b class="num" data-count="${T.profitCollected}">${fmt(T.profitCollected)}</b></div>
+      <div>ربح الآجل<b class="num a" data-count="${T.profitCredit}">${fmt(T.profitCredit)}</b></div>
       <div>الفواتير<b class="num">${T.nSales}</b></div>
-      <div>متوسط الفاتورة<b class="num">${fmt(T.avg)}</b></div>
     </div>
   </div>
   <div class="kpis">
@@ -940,10 +947,11 @@ function renderSales() {
   return `
   ${periodHTML(1)}
   <div class="card hero">
-    <div class="lbl">${icon('wallet')} صافي الدخل — ${esc(perLabel(p))}</div>
+    <div class="lbl">${icon('wallet')} صافي الدخل — ${esc(perLabel(p))} <span style="opacity:.7">(كاش + إلكتروني)</span></div>
     <div class="big num" data-count="${T.income}">${fmt(T.income)} <small>${esc(cur())}</small></div>
     <div class="sub-row">
-      <div>الربح<b class="num">${fmt(T.tProfit)}</b></div>
+      <div>الربح المحصّل<b class="num">${fmt(T.profitCollected)}</b></div>
+      <div>ربح الآجل<b class="num">${fmt(T.profitCredit)}</b></div>
       <div>فواتير<b class="num">${T.nSales}</b></div>
       <div>مرتجعات<b class="num">${T.nRets}</b></div>
     </div>
@@ -1084,18 +1092,20 @@ function renderProfit() {
   const rows = liveSales().filter(s => inRange(s, f, t));
   const T = salesTotals(rows);
   const days = dailyMap(rows, f, t);
-  const margin = T.tNet > 0 ? (T.tProfit / T.tNet * 100) : 0;
+  const margin = T.income > 0 ? (T.profitCollected / T.income * 100) : 0;
+  const marginAll = T.tNet > 0 ? (T.tProfit / T.tNet * 100) : 0;
   const top = topProducts(rows);
   const emps = empStats(rows);
   const showBars = days.length > 1 && days.length <= 31;
   return `
   ${periodHTML(4)}
   <div class="card hero">
-    <div class="lbl">${icon('trend')} صافي الربح — ${esc(perLabel(p))}</div>
-    <div class="big num" data-count="${T.tProfit}">${fmt(T.tProfit)} <small>${esc(cur())}</small></div>
+    <div class="lbl">${icon('trend')} الربح المحصّل (كاش + إلكتروني) — ${esc(perLabel(p))}</div>
+    <div class="big num" data-count="${T.profitCollected}">${fmt(T.profitCollected)} <small>${esc(cur())}</small></div>
     <div class="sub-row">
-      <div>هامش الربح<b class="num">${margin.toFixed(1)}%</b></div>
-      <div>متوسط ربح الفاتورة<b class="num">${fmt(T.nSales ? T.tProfit/T.nSales : 0)}</b></div>
+      <div>ربح الآجل<b class="num a" data-count="${T.profitCredit}">${fmt(T.profitCredit)}</b></div>
+      <div>إجمالي الربح<b class="num" data-count="${T.tProfit}">${fmt(T.tProfit)}</b></div>
+      <div>هامش الربح المحصّل<b class="num">${margin.toFixed(1)}%</b></div>
     </div>
   </div>
   <div class="kpis">
@@ -1103,6 +1113,15 @@ function renderProfit() {
     <div class="kpi"><label>تكلفة البضاعة المباعة</label><b class="num">${fmt(T.tCost)}</b></div>
     <div class="kpi"><label>الخصومات الممنوحة</label><b class="num r">${fmt(T.tDisc)}</b></div>
     <div class="kpi"><label>عدد الفواتير</label><b class="num">${T.nSales}</b></div>
+  </div>
+  <div class="card"><h3>${icon('cash')} أساس احتساب الربح</h3>
+    <div class="inv-item"><div class="tx"><b>المحصّل — كاش + إلكتروني</b><span>مبيعات: ${fmt(T.income)} • تكلفة: ${fmt(T.costCollected)}</span></div>
+      <div class="val num g">${fmt(T.profitCollected)}</div></div>
+    <div class="inv-item"><div class="tx"><b>الآجل — لم يُقبض بعد</b><span>مبيعات: ${fmt(T.credNet)} • تكلفة: ${fmt(T.costCredit)}</span></div>
+      <div class="val num a">${fmt(T.profitCredit)}</div></div>
+    <div class="inv-item"><div class="tx"><b>الإجمالي كل الفواتير</b><span>مبيعات: ${fmt(T.tNet)} • تكلفة: ${fmt(T.tCost)} • هامش: ${marginAll.toFixed(1)}%</span></div>
+      <div class="val">${fmt(T.tProfit)}</div></div>
+    <div class="note">تكلفة فواتير الآجل داخل التكلفة الكلية، وربحها داخل إجمالي الربح — لكن الدخل والربح المحصّل يُعرضان على أساس المقبوض فقط (كاش + إلكتروني) نفس أساس النظام الرئيسي.</div>
   </div>
   ${showBars ? `<div class="card"><h3>${icon('chart')} الربح اليومي خلال المدة</h3>${barsHTML(days, 'profit')}</div>` : ''}
   <div class="card"><h3>${icon('pill')} الأعلى ربحاً ${top.length?`— ${top.length} أصناف`:''}</h3>
